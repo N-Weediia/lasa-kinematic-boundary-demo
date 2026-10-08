@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+demo_output.json
+.lasa-integration-*/
+integration/.lasa-integration-*/

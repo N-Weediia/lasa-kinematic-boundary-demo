@@ -1,0 +1,80 @@
+diff --git a/libs/metric.py b/libs/metric.py
+--- a/libs/metric.py
++++ b/libs/metric.py
+@@ -303,9 +303,9 @@
+     # treat the first frame as boundary
+     peak = np.concatenate(
+         [
+-            np.ones((1), dtype=np.bool),
++            np.ones((1), dtype=np.bool_),
+             (prob[:-2] < prob[1:-1]) & (prob[2:] < prob[1:-1]),
+-            np.zeros((1), dtype=np.bool),
++            np.zeros((1), dtype=np.bool_),
+         ],
+         axis=0,
+     )
+diff --git a/libs/postprocess.py b/libs/postprocess.py
+--- a/libs/postprocess.py
++++ b/libs/postprocess.py
+@@ -1,5 +1,7 @@
+ import numpy as np
+ import torch
++
++from kinematic_boundary import refine_boundaries
+ 
+ from .metric import argrelmax
+ from .transformer import GaussianSmoothing
+@@ -100,6 +102,9 @@
+         outputs: np.array,
+         boundaries: np.ndarray,
+         masks: np.ndarray,
++        com_speed: np.ndarray = None,
++        angular_velocity: np.ndarray = None,
++        quality: np.ndarray = None,
+     ) -> np.ndarray:
+         """
+         Get segments which is defined as the span b/w two boundaries,
+@@ -122,8 +127,41 @@
+         for i, (output, pred, boundary, mask) in enumerate(
+             zip(outputs, preds, boundaries, masks)
+         ):
+-            boundary = boundary[mask]
+-            idx = argrelmax(boundary, threshold=self.boundary_th)
++            mask_array = np.asarray(mask, dtype=bool)
++            valid_mask = mask_array.reshape(-1)
++            # Preserve upstream's (1,T) boolean indexing and also accept (T,).
++            if boundary.shape == mask_array.shape:
++                boundary_valid = boundary[mask_array].reshape(-1)
++            else:
++                boundary_valid = boundary.reshape(-1)[valid_mask]
++
++            cue_ok = (
++                com_speed is not None
++                and angular_velocity is not None
++                and quality is not None
++            )
++            if cue_ok:
++                speed_batch = np.asarray(com_speed)
++                turn_batch = np.asarray(angular_velocity)
++                q_batch = np.asarray(quality)
++                cue_ok = (
++                    speed_batch.ndim == 2
++                    and turn_batch.shape == speed_batch.shape
++                    and speed_batch.shape[0] == len(preds)
++                    and speed_batch.shape[1] == pred.shape[0]
++                    and (q_batch.ndim == 0 or q_batch.size == len(preds))
++                )
++            if cue_ok:
++                q = float(q_batch if q_batch.ndim == 0 else q_batch.reshape(-1)[i])
++                _, idx, _ = refine_boundaries(
++                    boundary_valid,
++                    speed_batch[i][valid_mask],
++                    turn_batch[i][valid_mask],
++                    quality=q,
++                    threshold=self.boundary_th,
++                )
++            else:
++                idx = argrelmax(boundary_valid.copy(), threshold=self.boundary_th)
+ 
+             # add the index of the last action ending
+             T = pred.shape[0]
